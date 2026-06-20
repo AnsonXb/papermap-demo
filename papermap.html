@@ -560,19 +560,42 @@
 <script>
 // ========== API Configuration ==========
 const API_BASE = 'https://api.semanticscholar.org/graph/v1';
+const CORS_PROXY = 'https://corsproxy.io/?';  // 公开CORS代理
 let isUsingDemoData = false;
+let useProxy = true;  // 默认使用代理
 
 // ========== Utility Functions ==========
 async function fetchJSON(url) {
-  const res = await fetch(url, {
-    headers: { 'Accept': 'application/json' },
-    mode: 'cors'
-  });
-  if (!res.ok) {
-    if (res.status === 429) throw new Error('API_RATE_LIMIT');
-    throw new Error(`HTTP ${res.status}`);
+  // 尝试使用代理
+  const finalUrl = useProxy ? CORS_PROXY + encodeURIComponent(url) : url;
+
+  try {
+    const res = await fetch(finalUrl, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('API_RATE_LIMIT');
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    // 如果代理失败，尝试直接调用
+    if (useProxy) {
+      console.log('代理失败，尝试直接调用API...');
+      useProxy = false;
+      const res = await fetch(url, {
+        headers: { 'Accept': 'application/json' },
+        mode: 'cors'
+      });
+      if (!res.ok) {
+        if (res.status === 429) throw new Error('API_RATE_LIMIT');
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+    throw err;
   }
-  return res.json();
 }
 
 // ========== API Calls ==========
@@ -925,16 +948,29 @@ async function runDemo() {
 
   } catch (err) {
     console.error('API Error:', err);
+    console.error('Error details:', err.message);
 
     // Fallback to demo data
+    let errorMsg = '';
     if (err.message === 'API_RATE_LIMIT') {
-      alert('⚠️ API 请求过于频繁，已切换到演示模式\n（演示关键词：Transformer）');
-    } else if (err.message.includes('Failed to fetch')) {
-      alert('⚠️ 网络连接问题，已切换到演示模式\n（演示关键词：Transformer）');
+      errorMsg = '⚠️ API 速率限制（429 Too Many Requests）\n' +
+                 '\n💡 解决方案：' +
+                 '\n1. 等待30秒后再试' +
+                 '\n2. 当前已切换到演示模式' +
+                 '\n3. 演示关键词：Transformer' +
+                 '\n\n（Semantic Scholar API 有免费速率限制）';
+    } else if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+      errorMsg = '⚠️ 网络连接问题\n' +
+                 '\n可能原因：' +
+                 '\n• 浏览器CORS限制' +
+                 '\n• 网络防火墙/代理' +
+                 '\n• API服务暂时不可用' +
+                 '\n\n已切换到演示模式（演示关键词：Transformer）';
     } else {
-      alert('⚠️ 检索失败，已切换到演示模式\n（演示关键词：Transformer）');
+      errorMsg = `⚠️ 检索失败：${err.message}\n\n已切换到演示模式（演示关键词：Transformer）`;
     }
 
+    alert(errorMsg);
     isUsingDemoData = true;
     container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
     // Use original demo data
