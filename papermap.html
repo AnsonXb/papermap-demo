@@ -675,8 +675,8 @@ function convertToDemoPapers(centerPaper, references, citations) {
 }
 
 // ========== Demo Data (Fallback) ==========
-// Demo paper data for Transformer keyword
-const demoPapers = [
+// Demo paper data for Transformer keyword (BACKUP - DO NOT MODIFY)
+const DEMO_PAPERS_BACKUP = [
   { id:'p1', title:'Attention Is All You Need', year:2017, citations:120000, rank:1, isFoundation:true,
     summary:'提出 Transformer 架构，完全基于注意力机制，抛弃了 RNN/CNN，成为 NLP 和多模态领域的基石架构。',
     url:'https://arxiv.org/abs/1706.03762',
@@ -727,7 +727,10 @@ const demoPapers = [
     x:720, y:310, category:'llm' },
 ];
 
-const edges = [
+// Current papers (can be updated by API)
+let demoPapers = [...DEMO_PAPERS_BACKUP];
+
+const DEMO_EDGES_BACKUP = [
   ['p11','p1'],['p6','p1'],['p10','p1'],
   ['p1','p2'],['p1','p3'],['p1','p4'],['p1','p5'],['p1','p8'],
   ['p2','p3'],['p2','p4'],['p2','p7'],
@@ -735,6 +738,9 @@ const edges = [
   ['p8','p3'],['p8','p9'],
   ['p4','p12'],
 ];
+
+// Current edges (can be updated by API)
+let edges = [...DEMO_EDGES_BACKUP];
 
 const colors = {
   foundation: '#185FA5',
@@ -910,8 +916,13 @@ async function runDemo() {
 
     if (!results.length) {
       alert('未找到相关论文，请尝试其他关键词\n（已切换到演示模式）');
+
+      // Restore backup demo data
+      demoPapers = [...DEMO_PAPERS_BACKUP];
+      edges = [...DEMO_EDGES_BACKUP];
+      isUsingDemoData = true;
+
       container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
-      // Use original demo data
       drawGraph();
       return;
     }
@@ -932,8 +943,8 @@ async function runDemo() {
     );
 
     // 5. Update global variables
-    window.demoPapers = papers;
-    window.edges = newEdges;
+    demoPapers = papers;
+    edges = newEdges;
     isUsingDemoData = false;
 
     // 6. Redraw graph
@@ -972,8 +983,12 @@ async function runDemo() {
 
     alert(errorMsg);
     isUsingDemoData = true;
+
+    // Restore backup demo data
+    demoPapers = [...DEMO_PAPERS_BACKUP];
+    edges = [...DEMO_EDGES_BACKUP];
+
     container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
-    // Use original demo data
     drawGraph();
   }
 }
