@@ -559,55 +559,111 @@
 <!-- ========== JAVASCRIPT ========== -->
 <script>
 // ========== API Configuration ==========
-const API_BASE = 'https://api.semanticscholar.org/graph/v1';
-const CORS_PROXY = 'https://corsproxy.io/?';  // 公开CORS代理
+// 使用 OpenAlex API（更可靠，无需API Key，无严格限流）
+const API_BASE = 'https://api.openalex.org';
 let isUsingDemoData = false;
-let useProxy = true;  // 默认使用代理
 
 // ========== Utility Functions ==========
 async function fetchJSON(url) {
-  // 尝试使用代理
-  const finalUrl = useProxy ? CORS_PROXY + encodeURIComponent(url) : url;
-
-  try {
-    const res = await fetch(finalUrl, {
-      headers: { 'Accept': 'application/json' }
-    });
-
-    if (!res.ok) {
-      if (res.status === 429) throw new Error('API_RATE_LIMIT');
-      throw new Error(`HTTP ${res.status}`);
+  const res = await fetch(url, {
+    headers: {
+      'Accept': 'application/json',
+      'User-Agent': 'PaperMap/1.0 (mailto:contact@papermap.io)'  // OpenAlex推荐添加
     }
-    return res.json();
-  } catch (err) {
-    // 如果代理失败，尝试直接调用
-    if (useProxy) {
-      console.log('代理失败，尝试直接调用API...');
-      useProxy = false;
-      const res = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-        mode: 'cors'
-      });
-      if (!res.ok) {
-        if (res.status === 429) throw new Error('API_RATE_LIMIT');
-        throw new Error(`HTTP ${res.status}`);
-      }
-      return res.json();
-    }
-    throw err;
+  });
+
+  if (!res.ok) {
+    if (res.status === 429) throw new Error('API_RATE_LIMIT');
+    throw new Error(`HTTP ${res.status}`);
   }
+  return res.json();
 }
 
 // ========== API Calls ==========
 async function searchPapers(keyword) {
-  const url = `${API_BASE}/paper/search?query=${encodeURIComponent(keyword)}&fields=title,authors,year,abstract,citationCount,referenceCount,url,paperId&limit=12`;
+  // OpenAlex API 搜索
+  const url = `${API_BASE}/works?search=${encodeURIComponent(keyword)}&per-page=20&select=id,title,publication_year,abstract_inverted_index,cited_by_count,authorships,primary_location,referenced_works`;
   const data = await fetchJSON(url);
-  return data.data || [];
+
+  // 转换为统一格式
+  return (data.results || []).map(work => ({
+    paperId: work.id,
+    title: work.title || 'Unknown Title',
+    year: work.publication_year,
+    citationCount: work.cited_by_count || 0,
+    abstract: work.abstract_inverted_index ? reconstructAbstract(work.abstract_inverted_index) : '',
+    url: work.primary_location?.landing_page_url || work.id,
+    authors: (work.authorships || []).slice(0, 3).map(a => ({ name: a.author?.display_name || 'Unknown' })),
+    referencedWorks: work.referenced_works || []
+  }));
+}
+
+// 重建摘要（OpenAlex使用倒排索引格式）
+function reconstructAbstract(invertedIndex) {
+  if (!invertedIndex) return '';
+  const words = [];
+  for (const [word, positions] of Object.entries(invertedIndex)) {
+    positions.forEach(pos => {
+      words[pos] = word;
+    });
+  }
+  return words.filter(w => w).join(' ').slice(0, 300);
 }
 
 async function fetchPaperDetails(paperId) {
-  const url = `${API_BASE}/paper/${paperId}?fields=title,year,abstract,citationCount,url,paperId,authors,references.title,references.year,references.citationCount,references.url,references.paperId,references.authors,citations.title,citations.year,citations.citationCount,citations.url,citations.paperId,citations.authors&limit=20`;
-  return await fetchJSON(url);
+  // OpenAlex 获取论文详情（包含引用关系）
+  const url = `${API_BASE}/works/${encodeURIComponent(paperId)}?select=id,title,publication_year,abstract_inverted_index,cited_by_count,authorships,primary_location,referenced_works,cited_by_api_url`;
+  const work = await fetchJSON(url);
+
+  // 获取引用该论文的文章（citations）
+  let citations = [];
+  if (work.cited_by_api_url) {
+    try {
+      const citationsData = await fetchJSON(work.cited_by_api_url + '&per-page=10');
+      citations = (citationsData.results || []).map(w => ({
+        paperId: w.id,
+        title: w.title || 'Unknown',
+        year: w.publication_year,
+        citationCount: w.cited_by_count || 0,
+        url: w.primary_location?.landing_page_url || w.id,
+        abstract: w.abstract_inverted_index ? reconstructAbstract(w.abstract_inverted_index) : ''
+      }));
+    } catch (err) {
+      console.warn('获取citations失败:', err);
+    }
+  }
+
+  // 获取该论文引用的文章（references）
+  let references = [];
+  if (work.referenced_works && work.referenced_works.length > 0) {
+    try {
+      // 批量获取引用的论文信息
+      const refIds = work.referenced_works.slice(0, 10).join('|');
+      const refsUrl = `${API_BASE}/works?filter=openalex:${refIds}&per-page=10`;
+      const refsData = await fetchJSON(refsUrl);
+      references = (refsData.results || []).map(w => ({
+        paperId: w.id,
+        title: w.title || 'Unknown',
+        year: w.publication_year,
+        citationCount: w.cited_by_count || 0,
+        url: w.primary_location?.landing_page_url || w.id,
+        abstract: w.abstract_inverted_index ? reconstructAbstract(w.abstract_inverted_index) : ''
+      }));
+    } catch (err) {
+      console.warn('获取references失败:', err);
+    }
+  }
+
+  return {
+    paperId: work.id,
+    title: work.title || 'Unknown Title',
+    year: work.publication_year,
+    citationCount: work.cited_by_count || 0,
+    abstract: work.abstract_inverted_index ? reconstructAbstract(work.abstract_inverted_index) : '',
+    url: work.primary_location?.landing_page_url || work.id,
+    references: references,
+    citations: citations
+  };
 }
 
 // ========== Data Conversion ==========
@@ -900,30 +956,75 @@ function closeDetail() {
   document.getElementById('paper-detail').style.display = 'none';
 }
 
-function runDemo() {
+async function runDemo() {
   const keyword = document.getElementById('keyword-input').value.trim();
+  if (!keyword) {
+    alert('请输入研究关键词');
+    return;
+  }
 
-  // 直接使用演示数据（最可靠的方案）
   const container = document.getElementById('graph-container');
-  container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg><div class="loading-spinner">正在生成知识图谱...</div>';
+  container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg><div class="loading-spinner">正在检索真实论文数据（OpenAlex API）...</div>';
 
-  // 使用 setTimeout 模拟加载效果
-  setTimeout(() => {
-    // 恢复演示数据
+  try {
+    console.log(`🔍 搜索关键词: "${keyword}"`);
+
+    // 1. 搜索论文
+    const results = await searchPapers(keyword);
+    console.log(`✅ 找到 ${results.length} 篇论文`);
+
+    if (!results.length) {
+      alert(`未找到关于 "${keyword}" 的论文\n\n已切换到演示模式（Transformer）`);
+      demoPapers = [...DEMO_PAPERS_BACKUP];
+      edges = [...DEMO_EDGES_BACKUP];
+      isUsingDemoData = true;
+      container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
+      drawGraph();
+      return;
+    }
+
+    // 2. 选择引用数最多的作为中心
+    const centerPaper = results.sort((a, b) => (b.citationCount || 0) - (a.citationCount || 0))[0];
+    console.log(`📌 中心论文: ${centerPaper.title} (${centerPaper.citationCount} 引用)`);
+
+    // 3. 获取引用关系
+    console.log('🔗 获取引用关系...');
+    const details = await fetchPaperDetails(centerPaper.paperId);
+    console.log(`✅ 引用文献: ${details.references?.length || 0} 篇`);
+    console.log(`✅ 后续引用: ${details.citations?.length || 0} 篇`);
+
+    // 4. 转换数据格式
+    const { papers, edges: newEdges } = convertToDemoPapers(
+      details,
+      details.references || [],
+      details.citations || []
+    );
+
+    // 5. 更新全局变量
+    demoPapers = papers;
+    edges = newEdges;
+    isUsingDemoData = false;
+
+    // 6. 重绘图谱
+    container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
+    drawGraph();
+
+    // 7. 显示成功消息
+    console.log(`🎉 成功生成图谱: ${papers.length} 个节点`);
+
+  } catch (err) {
+    console.error('❌ API 错误:', err);
+
+    // 降级到演示数据
+    alert(`⚠️ 搜索失败: ${err.message}\n\n已切换到演示模式（Transformer）\n\n提示：可以尝试其他关键词，如 "deep learning", "neural network"`);
+
     demoPapers = [...DEMO_PAPERS_BACKUP];
     edges = [...DEMO_EDGES_BACKUP];
     isUsingDemoData = true;
 
-    // 清除加载动画并绘制图谱
     container.innerHTML = '<svg id="graph-canvas" viewBox="0 0 900 420"></svg>';
     drawGraph();
-
-    // 显示提示（如果关键词不是Transformer）
-    if (keyword && keyword.toLowerCase() !== 'transformer') {
-      console.log(`💡 提示：当前为演示版本，显示 Transformer 领域的经典论文图谱`);
-      console.log(`   包含 ${demoPapers.length} 篇论文，所有功能均可正常演示`);
-    }
-  }, 800); // 0.8秒加载动画
+  }
 }
 
 function updateStats(count, keyword) {
