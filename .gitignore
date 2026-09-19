@@ -1,3 +1,14 @@
-papermap.html.backup
-papermap.html.backup2
-"\344\270\200\351\224\256\346\216\250\351\200\201\345\210\260GitHub.bat"
+# 本地备份与临时文件
+*.backup
+*.bak
+*~
+
+# 操作系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本地脚本（含个人路径或密钥，不应提交）
+*.bat
+*.local
